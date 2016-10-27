@@ -31,7 +31,7 @@ setup (
 
     entry_points={
         'console_scripts': [
-            'oat2x = oat2x:main',
+            'mwlconv = mwlconv:main',
         ],
     }
 )

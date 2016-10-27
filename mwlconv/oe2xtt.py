@@ -1,7 +1,10 @@
 import numpy as np
+import math
 import os
 import sys
 import oat2x.utility as ut
+
+np.set_printoptions(threshold=np.nan)
 
 # Generates data table that can be output to stdout, file, or combined with
 # other data tables
@@ -10,33 +13,23 @@ class Oe2xtt():
     def __init__(self, source):
 
         self.MAX_SPIKES = int(1e6)
-        self.NUM_SAMP = 32
-        self.NUM_ELEC = 4
+        self.NUM_SAMP = 40 #OE does not write this info in the header.
         self.source = source
 
     def parse(self, invert):
 
-        d = self._loadSpikes(self.source)
+        d = self._loadSpikes(self.source)["data"]
 
-        #Make sure there are NUM_SAMP samples per waveform
-        #A/D is constrained to 32 samples/waveform
-        num_samp = d["waveform"].shape[1]
-        diff_samp = self.NUM_SAMP - num_samp
-        if diff_samp < 0: # Chop off end of waveform
-            s = np.delete(d["waveform"], np.s_[diff_samp:num_samp:1],1)
-        elif diff_samp > 0: # Pad with 0's
-            s = np.pad(d["waveform"], 
-                       ((0,0), (0,diff_samp), (0,0)), 
-                       "constant", 
-                       constant_values=((0,0), (0, 0), (0, 0)))
-       
-        x, y, z = s.shape 
-        s = np.reshape(s, (x, y*z)) 
+        ##Make sure there are NUM_SAMP samples per waveform
+        ad_waves = np.swapaxes(d["waveform"],1,2)
 
-        dt = [("t", "int32"), ("w","int16",(self.NUM_SAMP * self.NUM_ELEC))]
-        self.data = np.zeros(x, dtype=dt)
-        self.data["t"][:] = d["timestamps"]
-        self.data["w"][:] = (s - 32768)
+        nr, ns, nc = ad_waves.shape 
+        ad_waves = np.reshape(ad_waves, (nr, ns * nc)) 
+
+        dt = [("t", "int32"), ("w","int16",(self.NUM_SAMP * nc))]
+        self.data = np.zeros(nr, dtype=dt)
+        self.data["t"][:] = d["timestamp"]
+        self.data["w"][:] = (ad_waves - 32768) 
         if invert:
             self.data["w"] = -self.data["w"] 
 
@@ -50,7 +43,8 @@ class Oe2xtt():
         if (fid is None):
             with sys.stdout as fd:
                 fd.write(header_txt)
-                fd.write(np.array_str(self.data))
+                fd.flush()
+                sys.stdout.buffer.write(self.data.tobytes())
 
         else:
             with open(fid, 'wb') as fd:
@@ -60,8 +54,6 @@ class Oe2xtt():
 
     # Taken from OpenEphys python lib
     def _loadSpikes(self, filepath):
-        
-        # doesn't quite work...spikes are transposed in a weird way    
         
         data = { }
         
@@ -73,49 +65,32 @@ class Oe2xtt():
          
         data['header'] = header 
         numChannels = int(header['num_channels'])
-        numSamples = 40 # **NOT CURRENTLY WRITTEN TO HEADER**
-        
-        spikes = np.zeros((self.MAX_SPIKES, numSamples, numChannels))
-        timestamps = np.zeros(self.MAX_SPIKES)
-        source = np.zeros(self.MAX_SPIKES)
-        gain = np.zeros((self.MAX_SPIKES, numChannels))
-        thresh = np.zeros((self.MAX_SPIKES, numChannels))
-        sortedId = np.zeros((self.MAX_SPIKES, numChannels))
-        recNum = np.zeros(self.MAX_SPIKES)
-        
-        currentSpike = 0
-        
-        while f.tell() < os.fstat(f.fileno()).st_size:
-            
-            eventType = np.fromfile(f, np.dtype('<u1'),1) #always equal to 4, discard
-            timestamps[currentSpike] = np.fromfile(f, np.dtype('<i8'), 1)
-            software_timestamp = np.fromfile(f, np.dtype('<i8'), 1)
-            source[currentSpike] = np.fromfile(f, np.dtype('<u2'), 1)
-            numChannels = np.fromfile(f, np.dtype('<u2'), 1)
-            numSamples = np.fromfile(f, np.dtype('<u2'), 1)
-            sortedId[currentSpike] = np.fromfile(f, np.dtype('<u2'),1)
-            electrodeId = np.fromfile(f, np.dtype('<u2'),1)
-            channel = np.fromfile(f, np.dtype('<u2'),1)
-            color = np.fromfile(f, np.dtype('<u1'), 3)
-            pcProj = np.fromfile(f, np.float32, 2)
-            sampleFreq = np.fromfile(f, np.dtype('<u2'),1)
-            
-            waveforms = np.fromfile(f, np.dtype('<u2'), numChannels*numSamples)
-            wv = np.reshape(waveforms, (numSamples, numChannels))
-            
-            gain[currentSpike,:] = np.fromfile(f, np.float32, numChannels)
-            thresh[currentSpike,:] = np.fromfile(f, np.dtype('<u2'), numChannels)
-            
-            recNum[currentSpike] = np.fromfile(f, np.dtype('<u2'), 1)
 
-            
-            for ch in range(numChannels):
-                spikes[currentSpike,:,ch] = wv[:,ch]
-            
-            currentSpike += 1
-            
-        data['waveform'] = spikes[:currentSpike,:,:]
-        data['timestamps'] = timestamps[:currentSpike]
+        # Record schema
+        dt = [('type', '<u1'),
+              ('timestamp', '<i8'),
+              ('softtime', '<i8'),
+              ('source', '<u2'),
+              ('numchan', '<u2'),
+              ('numsamp', '<u2'),
+              ('sortid', '<u2'),
+              ('electrodeid', '<u2'),
+              ('channel', '<u2'),
+              ('color', '<u1',(3)), # The color of a spike...
+              ('pcproj', np.float32 ,(2)),
+              ('sampfreq', '<u2'),
+              ('waveform', '<u2', (numChannels, self.NUM_SAMP)),
+              ('gain', np.float32, (numChannels)),
+              ('thresh', '<u2', (numChannels)),
+              ('recordid', '<u2')]
+
+        record_type = np.dtype(dt); 
+        record_bytes = record_type.itemsize
+        bytes_left = os.fstat(f.fileno()).st_size - f.tell()
+        records_to_read = math.floor(bytes_left/record_bytes)
+
+        data['data'] = np.zeros(records_to_read, dtype=record_type)
+        data['data'] = np.fromfile(f, record_type, records_to_read)
 
         return data
 

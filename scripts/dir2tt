@@ -1,0 +1,19 @@
+#!/bin/bash
+
+trap '{ echo "Exiting." ; exit 1; }' INT
+
+for f in *.spikes; do
+    filename="${f%.spikes}"
+    name="$(echo $filename | tr '[:upper:]' '[:lower:]')"
+    if [ -z "$name" ]
+    then
+        continue
+    fi
+
+    name_full=$name".tt"
+
+    echo "Converting "$f" to "$name_full
+
+    # Create .tt file
+    mwlconv oe2tt -i $f -o $name_full -I -s 1.0
+done

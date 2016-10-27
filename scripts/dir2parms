@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Convert all combine .pos and .tt files to create .parms file. Move .tt
+# and .parms to their own directory so that xclust can be used their own
+# directory effectively.
+
+trap '{ echo "Exiting." ; exit 1; }' INT
+
+if [ -z "$1" ]
+then
+    echo "Must provide path to corresponding .pos file."
+    exit
+fi
+
+for f in *.tt; do
+    filename="${f%.tt}"
+    name="$(echo $filename | tr '[:upper:]' '[:lower:]')"
+    if [ -z "$name" ]
+    then
+        continue
+    fi
+
+    name_full=$name".parms"
+   
+    spikeparms2 $f -o $name_full -tetrode -binary -parms t_px,t_py,t_pa,t_pb,t_maxwd,t_maxht,time -sampfreq 30000 -spikelen 40 -pos $1
+
+    # Move everyting to its own dir
+    mkdir $f
+    mv $f $name_full $name
+done
+
+

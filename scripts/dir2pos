@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Convert all .spike files in a given directory to TT files, within
+# their own directory
+
+trap '{ echo "Exiting." ; exit 1; }' INT
+
+if [ -z "$1" ]
+then
+    echo "Provide xxxxxxx<pattern> to ID to Oat position files to convert."
+    echo "e.g., for pos1.json, pos2.json, pos3.json: .json will work."
+    exit
+fi
+
+for f in *$1; do
+    filename="${f%.json}"
+    name="$(echo $filename | tr '[:upper:]' '[:lower:]')"
+    if [ -z "$name" ]
+    then
+        continue
+    fi
+
+    name_full=$name".pos"
+    
+    echo "Converting "$f" to "$name_full
+
+    # Create .pos file
+    mwlconv oat2pos -i $f -o $name_full -s 1000.0
+done
+
